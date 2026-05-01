@@ -1,35 +1,38 @@
 from transformers import pipeline
 from transformers import AutoTokenizer, AutoModel
 import torch
-import pandas as pd
+import numpy as np
 from nltk.tokenize import sent_tokenize
 import nltk
 from sklearn.model_selection import train_test_split
 import EscalationClassifier
+from collections import Counter
 
 nltk.download('punkt')
 nltk.download('punkt_tab')
 
 # Creates a tokenizer and encoder
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
-encoder = AutoModel.from_pretrained("distilbert-base-uncased")
+encoder = AutoModel.from_pretrained("distilbert-base-uncased").to(device)
 encoder.eval()
 
 # Pulls HF emotion classification model
 emotion_model = pipeline("text-classification", model="j-hartmann/emotion-english-distilroberta-base")
 
+# Tokenizes transcript by sentences
+def transcript_to_turns(text):
+    return sent_tokenize(text)
+
 # Converts sentences to embeddings
 def embed(text):
     inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True)
-    
+    inputs = {k: v.to(device) for k, v in inputs.items()}
+
     with torch.no_grad():
         outputs = encoder(**inputs)
-    
-    return outputs.last_hidden_state[:, 0, :].squeeze(0)
 
-def score_utterance(text):
-    result = emotion_model(text)[0]
-    return result['score']
+    return outputs.last_hidden_state[0, 0].cpu()
 
 # Converts emotion score to intensity
 def emotion_score(text):
@@ -51,70 +54,67 @@ def emotion_score(text):
     
     return mapping.get(label.lower(), 0.5) * score
 
-# Tokenizes transcript by sentences
-def transcript_to_turns(text):
-    return sent_tokenize(text)
+def smooth(scores, k=3):
+    out = []
+    for i in range(len(scores)):
+        window = scores[max(0, i-k):i+1]
+        out.append(sum(window) / len(window))
+    return out
 
-# Computes escalation change per turn
-def compute_escalation_scores(turns):
-    scores = [emotion_score(t) for t in turns]
-    
-    deltas = []
-    for i in range(1, len(scores)):
-        deltas.append(scores[i] - scores[i-1])
-    
-    return scores, deltas
+def deltas(scores):
+    return np.array([scores[i] - scores[i-1] for i in range(1, len(scores))])
 
-# Converts escalation score to classification
-def label_deltas(deltas, threshold=0.05):
+def normalize_deltas(all_deltas):
+    mean = np.mean(all_deltas)
+    std = np.std(all_deltas) + 1e-8
+    return (all_deltas - mean) / std
+
+def label_turns(scores, z_thresh=0.75):
+    scores = smooth(scores, k=3)
+    all_deltas = deltas(scores)
+    norm = normalize_deltas(all_deltas)
+
     labels = []
-    for d in deltas:
-        if d > threshold:
-            labels.append(2)
-        elif d < -threshold:
-            labels.append(0)
-        else:
-            labels.append(1)
+    state = 0
+
+    for delta in norm:
+        if delta > z_thresh:
+            # Escalation
+            state = 1
+        elif delta <= -z_thresh:
+            # De-escalation
+            state = 0
+
+        labels.append(state)
+
     return labels
 
 # Builds training pipeline
 def process_transcript(text):
     turns = transcript_to_turns(text)
-    
-    if len(turns) < 2:
+
+    if len(turns) < 3:
         return None
     
-    scores, deltas = compute_escalation_scores(turns)
-    labels = label_deltas(deltas)
-    
-    embeddings = [embed(t) for t in turns]
-    
-    X = embeddings[1:]
-    y = labels
-    
+    scores = [emotion_score(t) for t in turns]
+    labels = label_turns(scores)
+
+    X = []
+    y = []
+
+    for i in range(1, len(turns)):
+        pair = turns[i-1] + " [SEP] " + turns[i]
+        X.append(embed(pair))
+        y.append(labels[i-1])
+
+    X = torch.stack(X)
+    y = torch.tensor(y, dtype=torch.long)
+
     return X, y
 
 # Flattens the dataset and splits it
 def split_embeddings(dataset):
-    flat_X = []
-    flat_y = []
-
-    for X, y in dataset:
-        for xi, yi in zip(X, y):
-            flat_X.append(xi)
-            flat_y.append(yi)
-
-    X_tensor = torch.stack(flat_X)
-    y_tensor = torch.tensor(flat_y)
-
-    # Shuffles before split
-    perm = torch.randperm(len(X_tensor))
-    X_tensor = X_tensor[perm]
-    y_tensor = y_tensor[perm]
-
-    return train_test_split(
-        X_tensor, y_tensor, test_size=0.2, random_state=42
-    )
+    return train_test_split(dataset, test_size=0.2, random_state=67)
 
 def pipeline(df):
     dataset = []
@@ -125,10 +125,12 @@ def pipeline(df):
             dataset.append(result)
 
     # Splits data
-    X_train, X_test, y_train, y_test = split_embeddings(dataset)
+    train_data, test_data = split_embeddings(dataset)
+
+    print(len(dataset))
+    print(len(train_data))
+    print(len(test_data))
 
     # Trains and tests NN
-    EscalationClassifier.run_classifier(X_train, y_train)
-    EscalationClassifier.eval_classifer(X_test, y_test)
-
-    return None
+    classifer = EscalationClassifier.run_classifier(train_data)
+    EscalationClassifier.eval_classifer(classifer, test_data)
