@@ -5,8 +5,8 @@ import numpy as np
 from nltk.tokenize import sent_tokenize
 import nltk
 from sklearn.model_selection import train_test_split
-import EscalationClassifier
 import json
+import EscalationClassifier
 
 nltk.download('punkt')
 nltk.download('punkt_tab')
