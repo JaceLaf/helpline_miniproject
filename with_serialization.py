@@ -2,7 +2,6 @@ import kagglehub
 import os
 import pandas as pd
 import model
-import json
 from openai import OpenAI
 
 # Uses GPT-4.1-mini to generate a rubric for each transcript
@@ -32,12 +31,12 @@ df = pd.read_csv(os.path.join(path, file[0]))
 
 # Reads in rubric
 rubric_ptr = open("/home/jason-lafita/helpline_miniproject/rubric.txt", "r")
-RUBRIC_PROMPT = rubric_ptr.read()
+rubric_prompt = rubric_ptr.read()
 rubric_ptr.close()
 
 rubs = []
 for t in df["Transcript"]:
-    r = extract_rubric(t)
+    r = extract_rubric(t, rubric_prompt)
     rubs.append(r)
 
 df["Rubric"] = rubs

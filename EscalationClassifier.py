@@ -5,14 +5,22 @@ from sklearn.metrics import classification_report
 import numpy as np
 
 class EscalationClassifier(nn.Module):
-    def __init__(self):
+    def __init__(self, raw=True):
         super().__init__()
         
-        self.lstm = nn.LSTM(
-            input_size=768,
-            hidden_size=128,
-            batch_first=True
-        )
+        if raw:
+            self.lstm = nn.LSTM(
+                input_size=768,
+                hidden_size=128,
+                batch_first=True
+            )
+        else:
+            self.lstm = nn.LSTM(
+                input_size=768+10,
+                hidden_size=128,
+                batch_first=True
+            )
+
         
         self.fc = nn.Linear(128, 3)
 
@@ -29,8 +37,8 @@ def collate(batch):
 
     return X_padded, y_padded
 
-def run_classifier(train_data):
-    model = EscalationClassifier()
+def run_classifier(train_data, raw):
+    model = EscalationClassifier(raw)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     criterion = nn.CrossEntropyLoss(ignore_index=-1)
 

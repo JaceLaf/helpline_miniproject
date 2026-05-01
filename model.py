@@ -6,7 +6,7 @@ from nltk.tokenize import sent_tokenize
 import nltk
 from sklearn.model_selection import train_test_split
 import EscalationClassifier
-from collections import Counter
+import json
 
 nltk.download('punkt')
 nltk.download('punkt_tab')
@@ -89,6 +89,68 @@ def label_turns(scores, z_thresh=0.75):
 
     return labels
 
+def rubric_to_vector(rubric):
+    if rubric is None:
+        return torch.zeros(10)
+
+    # Emotional state
+    anger_map = {"low": 0, "medium": 1, "high": 2}
+    anger = anger_map.get(
+        rubric["customer_emotional_state"]["anger"],
+        0
+    )
+
+    frustration_count = len(
+        rubric["customer_emotional_state"].get("frustration_indicators", [])
+    )
+
+    acknowledgment = 1 if rubric["agent_handling_quality"]["acknowledgment_present"] else 0
+
+    deescalation = len(
+        rubric["agent_handling_quality"].get("deescalation_attempts", [])
+    )
+
+    interruption_count = rubric["conversation_dynamics"]["interruption_count"]
+
+    dominance_map = {"agent": 0, "balanced": 1, "customer": 2}
+    dominance = dominance_map.get(
+        rubric["conversation_dynamics"]["dominance"],
+        1
+    )
+
+    explicit_escalation = 1 if rubric["escalation_signals"]["explicit_escalation_request"] else 0
+
+    repetition_map = {"low": 0, "medium": 1, "high": 2}
+    repetition = repetition_map.get(
+        rubric["escalation_signals"]["complaint_repetition"],
+        0
+    )
+
+    resolved_map = {"yes": 0, "partial": 1, "no": 2}
+    resolved = resolved_map.get(
+        rubric["resolution_state"]["resolved"],
+        0
+    )
+
+    risk_map = {"low": 0, "medium": 1, "high": 2}
+    risk = risk_map.get(
+        rubric["overall_escalation_risk"]["risk"],
+        0
+    )
+
+    return torch.tensor([
+        anger,
+        frustration_count,
+        acknowledgment,
+        deescalation,
+        interruption_count,
+        dominance,
+        explicit_escalation,
+        repetition,
+        resolved,
+        risk
+    ], dtype=torch.float)
+
 # Determines label for transcript
 def process_raw_transcript(text):
     turns = transcript_to_turns(text)
@@ -115,8 +177,33 @@ def process_raw_transcript(text):
     return X, y
 
 def process_with_rubric(text, rubric):
-    X, y = process_raw_transcript(text)
-    return None
+    turns = transcript_to_turns(text)
+
+    if len(turns) < 3:
+        return None
+
+    scores = [emotion_score(t) for t in turns]
+    labels = label_turns(scores)
+
+    X = []
+    y = []
+
+    rubric_vec = rubric_to_vector(json.loads(rubric))
+
+    for i in range(1, len(turns)):
+        pair = turns[i-1] + " [SEP] " + turns[i]
+
+        emb = embed(pair)
+
+        full_feature = torch.cat([emb, rubric_vec])
+
+        X.append(full_feature)
+        y.append(labels[i-1])
+
+    X = torch.stack(X)
+    y = torch.tensor(y, dtype=torch.long)
+
+    return X, y
 
 def pipeline(df, raw=True):
     dataset = []
@@ -139,5 +226,5 @@ def pipeline(df, raw=True):
     print(len(test_data))
 
     # Trains and tests NN
-    classifer = EscalationClassifier.run_classifier(train_data)
+    classifer = EscalationClassifier.run_classifier(train_data, raw)
     EscalationClassifier.eval_classifer(classifer, test_data)
