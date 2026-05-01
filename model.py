@@ -54,6 +54,7 @@ def emotion_score(text):
     
     return mapping.get(label.lower(), 0.5) * score
 
+# Reduces noise in emotion score
 def smooth(scores, k=3):
     out = []
     for i in range(len(scores)):
@@ -61,14 +62,17 @@ def smooth(scores, k=3):
         out.append(sum(window) / len(window))
     return out
 
+# Determines change in emotion
 def deltas(scores):
     return np.array([scores[i] - scores[i-1] for i in range(1, len(scores))])
 
+# Normalizes change across list of all change
 def normalize_deltas(all_deltas):
     mean = np.mean(all_deltas)
     std = np.std(all_deltas) + 1e-8
     return (all_deltas - mean) / std
 
+# Classifies each turn as either an escalation or de-escalation
 def label_turns(scores, z_thresh=0.75):
     scores = smooth(scores, k=3)
     all_deltas = deltas(scores)
@@ -89,11 +93,11 @@ def label_turns(scores, z_thresh=0.75):
 
     return labels
 
+# Converts a rubric in json format to a tensor
 def rubric_to_vector(rubric):
     if rubric is None:
         return torch.zeros(10)
 
-    # Emotional state
     anger_map = {"low": 0, "medium": 1, "high": 2}
     anger = anger_map.get(
         rubric["customer_emotional_state"]["anger"],
@@ -151,7 +155,7 @@ def rubric_to_vector(rubric):
         risk
     ], dtype=torch.float)
 
-# Determines label for transcript
+# Creates embeddings for transcript
 def process_raw_transcript(text):
     turns = transcript_to_turns(text)
 
@@ -176,6 +180,7 @@ def process_raw_transcript(text):
 
     return X, y
 
+# Creates embeddings for transcript and rubric
 def process_with_rubric(text, rubric):
     turns = transcript_to_turns(text)
 
@@ -205,6 +210,7 @@ def process_with_rubric(text, rubric):
 
     return X, y
 
+# Runs the model
 def pipeline(df, raw=True):
     dataset = []
 
