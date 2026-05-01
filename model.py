@@ -221,10 +221,6 @@ def pipeline(df, raw=True):
     # Splits data
     train_data, test_data = train_test_split(dataset, test_size=0.2, random_state=67)
 
-    print(len(dataset))
-    print(len(train_data))
-    print(len(test_data))
-
     # Trains and tests NN
     classifer = EscalationClassifier.run_classifier(train_data, raw)
     EscalationClassifier.eval_classifer(classifer, test_data)
