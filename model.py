@@ -89,13 +89,14 @@ def label_turns(scores, z_thresh=0.75):
 
     return labels
 
-# Builds training pipeline
-def process_transcript(text):
+# Determines label for transcript
+def process_raw_transcript(text):
     turns = transcript_to_turns(text)
 
     if len(turns) < 3:
         return None
     
+    # Determines escalation based on change in emotions
     scores = [emotion_score(t) for t in turns]
     labels = label_turns(scores)
 
@@ -107,25 +108,31 @@ def process_transcript(text):
         X.append(embed(pair))
         y.append(labels[i-1])
 
+    # Creates tensor objects
     X = torch.stack(X)
     y = torch.tensor(y, dtype=torch.long)
 
     return X, y
 
-# Flattens the dataset and splits it
-def split_embeddings(dataset):
-    return train_test_split(dataset, test_size=0.2, random_state=67)
+def process_with_rubric(text, rubric):
+    X, y = process_raw_transcript(text)
+    return None
 
-def pipeline(df):
+def pipeline(df, raw=True):
     dataset = []
+
+    # Converts transcript into escalation embeddings
     for _, row in df.iterrows():
-        result = process_transcript(row["Transcript"])
+        if raw:
+            result = process_raw_transcript(row["Transcript"])
+        else:
+            result = process_with_rubric(row["Transcript"], row["Rubric"])
         
         if result is not None:
             dataset.append(result)
 
     # Splits data
-    train_data, test_data = split_embeddings(dataset)
+    train_data, test_data = train_test_split(dataset, test_size=0.2, random_state=67)
 
     print(len(dataset))
     print(len(train_data))
